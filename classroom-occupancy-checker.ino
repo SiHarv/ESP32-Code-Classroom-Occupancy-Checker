@@ -1,29 +1,27 @@
+#include <Arduino.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 
 // Wi-Fi credentials
-#define SSID               "SSID_NAME"
-#define PASSWORD           "SSID_PASSWORD"
+const char* SSID = "SSID";
+const char* PASSWORD = "PASSWORD";
 
 // Supabase credentials
-#define supabaseUrl        ""
-#define supabaseKey        ""
-#define tableName          "rooms"
+const char* supabaseUrl = "";
+const char* supabaseKey = "";
+const char* tableName = "rooms";
 
-// Infrared sensor pin (D32)
-#define IR_SENSOR_PIN      32
-
-// For tracking last status to avoid redundant updates
+// Use GPIO4 instead of GPIO2
+const int presencePin = 4;
 String lastStatus = "";
 
 void setup() {
   Serial.begin(115200);
-  pinMode(IR_SENSOR_PIN, INPUT);
+  pinMode(presencePin, INPUT);
 
-  // Connect to Wi-Fi
   WiFi.begin(SSID, PASSWORD);
-  Serial.print("Connecting to WiFi...");
+  Serial.print("Connecting to WiFi");
   while (WiFi.status() != WL_CONNECTED) {
     delay(1000);
     Serial.print(".");
@@ -32,37 +30,42 @@ void setup() {
 }
 
 void loop() {
-  // Read sensor (HIGH = detected, LOW = nothing, but check your sensor's logic!)
-  int sensorValue = digitalRead(IR_SENSOR_PIN);
+  int presenceState = digitalRead(presencePin);
   String statusToSend;
 
-  // Adjust logic if your sensor outputs LOW for detect!
-  if (sensorValue == HIGH) {
-    statusToSend = "Not Occupied";
-  } else {
+  if (presenceState == HIGH) {
+    Serial.println("Presence detected");
     statusToSend = "Occupied";
+  } else {
+    Serial.println("No presence detected");
+    statusToSend = "Not Occupied";
   }
 
-  // Only update if status has changed
   if (statusToSend != lastStatus) {
     sendStatusToSupabase(statusToSend);
     lastStatus = statusToSend;
   }
 
-  delay(500); // Check sensor twice per second
+  delay(1000);
 }
 
 void sendStatusToSupabase(String status) {
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("WiFi not connected. Attempting to reconnect...");
-    while (!WiFi.reconnect()) {
-      Serial.println("Reconnecting to WiFi...");
-      delay(500);
+    WiFi.reconnect();
+    int retries = 0;
+    while (WiFi.status() != WL_CONNECTED && retries < 10) {
+      delay(1000);
+      Serial.print(".");
+      retries++;
+    }
+    if (WiFi.status() != WL_CONNECTED) {
+      Serial.println("Reconnect failed.");
+      return;
     }
     Serial.println("WiFi reconnected.");
   }
 
-  // Prepare JSON
   StaticJsonDocument<200> jsonDoc;
   jsonDoc["status"] = status;
 
@@ -80,7 +83,7 @@ void sendStatusToSupabase(String status) {
 
   int httpResponseCode = http.PATCH(jsonString);
   if (httpResponseCode > 0) {
-    Serial.print("Set room 1 status to: ");
+    Serial.print("Supabase update: ");
     Serial.println(status);
     Serial.println("HTTP Response code: " + String(httpResponseCode));
     String response = http.getString();
